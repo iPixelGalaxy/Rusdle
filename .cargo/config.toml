@@ -1,4 +1,6 @@
-[build]
-# The V: drive is a virtual filesystem that doesn't support Cargo's atomic
-# temp-file rename, causing "os error 87". Build to C: instead.
-target-dir = "C:/tmp/rusdle-target"
+# Local Windows workaround: if building on the V: virtual drive you may hit
+# "os error 87" (Cargo's atomic temp-rename fails on that filesystem).
+# Fix it by setting CARGO_TARGET_DIR in your shell/environment, e.g.:
+#   $env:CARGO_TARGET_DIR = "C:\tmp\rusdle-target"   (PowerShell)
+#   export CARGO_TARGET_DIR=C:/tmp/rusdle-target      (bash)
+# Do NOT set target-dir here — it would break CI on macOS/Linux.
