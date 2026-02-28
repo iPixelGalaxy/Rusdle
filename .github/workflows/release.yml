@@ -81,13 +81,59 @@ jobs:
             target/x86_64-apple-darwin/release/rusdle \
             -output rusdle-universal
 
-      - name: Package
-        run: tar czf rusdle-macos-universal.tar.gz rusdle-universal
+      - name: Assemble Rusdle.app bundle
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          APP="Rusdle.app"
+          mkdir -p "$APP/Contents/MacOS"
+          mkdir -p "$APP/Contents/Resources"
+
+          cp rusdle-universal "$APP/Contents/MacOS/rusdle"
+          chmod +x "$APP/Contents/MacOS/rusdle"
+
+          # Strip leading 'v' from tag for CFBundleShortVersionString
+          BUNDLE_VER="${VERSION#v}"
+
+          cat > "$APP/Contents/Info.plist" << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDisplayName</key>   <string>Rusdle</string>
+            <key>CFBundleExecutable</key>    <string>rusdle</string>
+            <key>CFBundleIdentifier</key>    <string>com.rusdle.game</string>
+            <key>CFBundleName</key>          <string>Rusdle</string>
+            <key>CFBundlePackageType</key>   <string>APPL</string>
+            <key>CFBundleShortVersionString</key> <string>${BUNDLE_VER}</string>
+            <key>CFBundleVersion</key>       <string>${BUNDLE_VER}</string>
+            <key>LSMinimumSystemVersion</key><string>10.14</string>
+            <key>NSHighResolutionCapable</key><true/>
+            <key>NSHumanReadableCopyright</key>
+              <string>MIT License</string>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Create DMG
+        run: |
+          # Stage: app + shortcut to /Applications
+          mkdir dmg-staging
+          cp -r Rusdle.app dmg-staging/
+          ln -s /Applications dmg-staging/Applications
+
+          hdiutil create \
+            -volname "Rusdle" \
+            -srcfolder dmg-staging \
+            -ov \
+            -format UDZO \
+            rusdle-macos-universal.dmg
 
       - uses: actions/upload-artifact@v4
         with:
           name: rusdle-macos-universal
-          path: rusdle-macos-universal.tar.gz
+          path: rusdle-macos-universal.dmg
 
   # ── Build Linux ──────────────────────────────────────────────────────────────
   build-linux:
@@ -151,5 +197,5 @@ jobs:
           generate_release_notes: true
           files: |
             rusdle-windows-x64.zip
-            rusdle-macos-universal.tar.gz
+            rusdle-macos-universal.dmg
             rusdle-linux-x64.tar.gz
