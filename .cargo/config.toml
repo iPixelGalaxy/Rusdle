@@ -1,0 +1,4 @@
+[build]
+# The V: drive is a virtual filesystem that doesn't support Cargo's atomic
+# temp-file rename, causing "os error 87". Build to C: instead.
+target-dir = "C:/tmp/rusdle-target"

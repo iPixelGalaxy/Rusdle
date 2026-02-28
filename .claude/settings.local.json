@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo check:*)",
+      "Bash(CARGO_TARGET_DIR=\"V:/tmp/rusdle-target\" cargo check:*)",
+      "Bash(wmic logicaldisk:*)",
+      "Bash(powershell:*)",
+      "Bash(CARGO_TARGET_DIR=\"C:/tmp/rusdle-target\" cargo check:*)"
+    ]
+  }
+}

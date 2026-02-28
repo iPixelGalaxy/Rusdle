@@ -12,6 +12,7 @@ use game::{GameState, GameStatus, TileState, MAX_GUESSES, WORD_LENGTH};
 use rand::Rng;
 use stats::ProfileManager;
 use std::f32::consts::PI;
+use std::sync::Arc;
 use std::time::Instant;
 
 // ── Animation ─────────────────────────────────────────────────────────────────
@@ -157,15 +158,76 @@ fn header_btn(
     ctx.input(|i| hov && i.pointer.primary_released())
 }
 
+// ── Window icon (same design as the embedded exe icon) ────────────────────────
+
+/// Generate RGBA pixel data for the Rusdle icon (green background + white "R").
+/// Matches the icon painted into the exe by build.rs, but in top-to-bottom RGBA
+/// order as required by egui's IconData.
+fn make_icon_rgba(size: u32) -> Vec<u8> {
+    let green: [u8; 4] = [0x53, 0x8D, 0x4E, 0xFF]; // RGBA for #538D4E
+    let white: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
+    let dark:  [u8; 4] = [0x3C, 0x6B, 0x38, 0xFF]; // slightly darker corners
+
+    let s = size as usize;
+    let mut px = vec![green; s * s];
+
+    let corners = [
+        (0,0),(1,0),(0,1),(s-1,0),(s-2,0),(s-1,1),
+        (0,s-1),(1,s-1),(0,s-2),(s-1,s-1),(s-2,s-1),(s-1,s-2),
+    ];
+    for (x, y) in corners { px[y * s + x] = dark; }
+
+    const R_COLS: usize = 6;
+    const R_ROWS: usize = 7;
+    let r_bits: [[u8; R_COLS]; R_ROWS] = [
+        [1,1,1,1,0,0],
+        [1,0,0,0,1,0],
+        [1,0,0,0,1,0],
+        [1,1,1,1,0,0],
+        [1,0,1,0,0,0],
+        [1,0,0,1,0,0],
+        [1,0,0,0,1,0],
+    ];
+
+    let scale = ((s * 55 / 100) / R_ROWS).max(1);
+    let rw = R_COLS * scale;
+    let rh = R_ROWS * scale;
+    let x0 = s.saturating_sub(rw) / 2;
+    let y0 = s.saturating_sub(rh) / 2;
+
+    for (row, bits) in r_bits.iter().enumerate() {
+        for (col, &bit) in bits.iter().enumerate() {
+            if bit == 1 {
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let x = x0 + col * scale + dx;
+                        let y = y0 + row * scale + dy;
+                        if x < s && y < s { px[y * s + x] = white; }
+                    }
+                }
+            }
+        }
+    }
+
+    px.iter().flat_map(|p| p.iter().copied()).collect()
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 fn main() -> eframe::Result {
+    let icon = Arc::new(egui::IconData {
+        rgba:   make_icon_rgba(32),
+        width:  32,
+        height: 32,
+    });
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Rusdle")
             .with_inner_size([500.0, 750.0])
             .with_min_inner_size([360.0, 560.0])
-            .with_resizable(true),
+            .with_resizable(true)
+            .with_icon(icon),
         ..Default::default()
     };
     eframe::run_native("Rusdle", options, Box::new(|cc| {
@@ -372,13 +434,11 @@ impl eframe::App for RusdleApp {
                 if header_btn(painter, ctx, profiles_rect, icon_person, "PROFILES",
                               self.show_profiles, scale) {
                     self.show_profiles = !self.show_profiles;
-                    self.show_stats    = false;
-                    self.profile_error = None;
+                    if !self.show_profiles { self.profile_error = None; }
                 }
                 if header_btn(painter, ctx, stats_rect, icon_barchart, "STATS",
                               self.show_stats, scale) {
-                    self.show_stats    = !self.show_stats;
-                    self.show_profiles = false;
+                    self.show_stats = !self.show_stats;
                 }
 
                 // Active profile name (tiny, bottom of header)
@@ -522,7 +582,9 @@ impl eframe::App for RusdleApp {
         // ── Stats window (draggable) ──────────────────────────────────────────
         if self.show_stats {
             let stats = self.profiles.active().stats.clone();
-            egui::Window::new("  STATISTICS  ")
+            let mut show_stats = self.show_stats;
+            egui::Window::new("STATISTICS")
+                .open(&mut show_stats)
                 .collapsible(false)
                 .resizable(false)
                 .default_pos(ctx.screen_rect().center() - Vec2::new(175.0, 220.0))
@@ -621,16 +683,15 @@ impl eframe::App for RusdleApp {
                     });
 
                     ui.add_space(10.0);
-                    ui.vertical_centered(|ui| {
-                        if ui.button("  Close  ").clicked() { self.show_stats = false; }
-                    });
-                    ui.add_space(4.0);
                 });
+            self.show_stats = show_stats;
         }
 
         // ── Profiles window (draggable) ───────────────────────────────────────
         if self.show_profiles {
-            egui::Window::new("  PROFILES  ")
+            let mut show_profiles = self.show_profiles;
+            egui::Window::new("PROFILES")
+                .open(&mut show_profiles)
                 .collapsible(false)
                 .resizable(false)
                 .default_pos(ctx.screen_rect().center() - Vec2::new(160.0, 180.0))
@@ -660,12 +721,20 @@ impl eframe::App for RusdleApp {
                                 .show(ui, |ui| {
                                     ui.set_min_width(280.0);
 
-                                    // Row 1: dot + name | Switch / ✕ / Active on right
+                                    // Row 1: dot + name | Switch / delete / Active on right
                                     ui.horizontal(|ui| {
-                                        ui.colored_label(
-                                            if *is_active { C_CORRECT }
-                                            else { Color32::from_rgb(80, 80, 83) },
-                                            if *is_active { "●" } else { "○" });
+                                        // Painter-drawn dot — avoids Unicode box rendering
+                                        let (dot_rect, _) = ui.allocate_exact_size(
+                                            Vec2::splat(14.0), egui::Sense::hover());
+                                        if *is_active {
+                                            ui.painter().circle_filled(
+                                                dot_rect.center(), 4.5, C_CORRECT);
+                                        } else {
+                                            ui.painter().circle_stroke(
+                                                dot_rect.center(), 3.5,
+                                                Stroke::new(1.5, Color32::from_rgb(80, 80, 83)));
+                                        }
+
                                         ui.label(RichText::new(name).strong()
                                             .size(14.0).color(C_WHITE));
 
@@ -673,7 +742,24 @@ impl eframe::App for RusdleApp {
                                             egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
                                             if !is_active && list.len() > 1 {
-                                                if ui.small_button("✕").clicked() {
+                                                // Painter-drawn X — avoids Unicode box rendering
+                                                let (x_rect, x_resp) = ui.allocate_exact_size(
+                                                    Vec2::splat(20.0), egui::Sense::click());
+                                                let x_col = if x_resp.hovered() {
+                                                    C_WHITE
+                                                } else {
+                                                    Color32::from_rgb(160, 80, 80)
+                                                };
+                                                let xs = 4.0_f32;
+                                                let c  = x_rect.center();
+                                                let sw = Stroke::new(1.5, x_col);
+                                                ui.painter().line_segment(
+                                                    [Pos2::new(c.x - xs, c.y - xs),
+                                                     Pos2::new(c.x + xs, c.y + xs)], sw);
+                                                ui.painter().line_segment(
+                                                    [Pos2::new(c.x + xs, c.y - xs),
+                                                     Pos2::new(c.x - xs, c.y + xs)], sw);
+                                                if x_resp.clicked() {
                                                     self.profiles.delete_profile(name);
                                                     self.profiles.save();
                                                 }
@@ -732,11 +818,8 @@ impl eframe::App for RusdleApp {
                     }
 
                     ui.add_space(8.0);
-                    ui.vertical_centered(|ui| {
-                        if ui.button("  Close  ").clicked() { self.show_profiles = false; }
-                    });
-                    ui.add_space(4.0);
                 });
+            self.show_profiles = show_profiles;
         }
     }
 }
