@@ -5,6 +5,9 @@ A Wordle-inspired word puzzle game built with Rust and [egui](https://github.com
 Guess the hidden 5-letter word in 6 tries. Each guess reveals which letters are
 correct (green), present but misplaced (yellow), or absent (gray).
 
+<img width="1465" height="776" alt="image" src="https://github.com/user-attachments/assets/9173e187-aa18-42cc-83a6-4b1958d65f65" />
+
+
 ---
 
 ## Features
