@@ -21,6 +21,9 @@ codegen-units = 1
 name = "rusdle"
 path = "src/main.rs"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 [build-dependencies]
 
 [target.'cfg(windows)'.build-dependencies]

@@ -161,21 +161,12 @@ fn header_btn(
 // ── Window icon (same design as the embedded exe icon) ────────────────────────
 
 /// Generate RGBA pixel data for the Rusdle icon (green background + white "R").
-/// Matches the icon painted into the exe by build.rs, but in top-to-bottom RGBA
-/// order as required by egui's IconData.
 fn make_icon_rgba(size: u32) -> Vec<u8> {
-    let green: [u8; 4] = [0x53, 0x8D, 0x4E, 0xFF]; // RGBA for #538D4E
+    let green: [u8; 4] = [0x53, 0x8D, 0x4E, 0xFF];
     let white: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
-    let dark:  [u8; 4] = [0x3C, 0x6B, 0x38, 0xFF]; // slightly darker corners
 
     let s = size as usize;
     let mut px = vec![green; s * s];
-
-    let corners = [
-        (0,0),(1,0),(0,1),(s-1,0),(s-2,0),(s-1,1),
-        (0,s-1),(1,s-1),(0,s-2),(s-1,s-1),(s-2,s-1),(s-1,s-2),
-    ];
-    for (x, y) in corners { px[y * s + x] = dark; }
 
     const R_COLS: usize = 6;
     const R_ROWS: usize = 7;
@@ -212,14 +203,59 @@ fn make_icon_rgba(size: u32) -> Vec<u8> {
     px.iter().flat_map(|p| p.iter().copied()).collect()
 }
 
+// ── macOS: load icon from bundled ICNS ───────────────────────────────────────
+
+/// Parse the bundled AppIcon.icns, extract the best PNG chunk, and return it
+/// as egui::IconData so eframe displays the correct icon in the title bar.
+/// Falls back to None on any parse/decode error (caller uses make_icon_rgba).
+#[cfg(target_os = "macos")]
+fn icon_from_icns() -> Option<egui::IconData> {
+    const ICNS: &[u8] = include_bytes!("../assets/AppIcon.icns");
+    if ICNS.get(0..4) != Some(b"icns") { return None; }
+
+    // Preferred PNG chunk types, largest useful size first
+    let preference: &[&[u8; 4]] = &[
+        b"ic09", // 512×512 PNG
+        b"ic14", // 512×512@2x PNG
+        b"ic08", // 256×256 PNG
+        b"ic13", // 256×256@2x PNG
+        b"ic07", // 128×128 PNG
+        b"ic10", // 1024×1024 PNG
+    ];
+
+    let mut best: Option<(usize, &[u8])> = None;
+    let mut pos = 8usize; // skip 4-byte magic + 4-byte total length
+    while pos + 8 <= ICNS.len() {
+        let tag      = &ICNS[pos..pos + 4];
+        let block_len = u32::from_be_bytes(
+            ICNS[pos + 4..pos + 8].try_into().ok()?) as usize;
+        if block_len < 8 || pos + block_len > ICNS.len() { break; }
+        let data = &ICNS[pos + 8..pos + block_len];
+
+        if data.starts_with(b"\x89PNG") {
+            if let Some(rank) = preference.iter().position(|t| *t == tag) {
+                if best.map_or(true, |(r, _)| rank < r) {
+                    best = Some((rank, data));
+                }
+            }
+        }
+        pos += block_len;
+    }
+
+    let (_, png) = best?;
+    let img = image::load_from_memory(png).ok()?.into_rgba8();
+    let (w, h) = img.dimensions();
+    Some(egui::IconData { rgba: img.into_raw(), width: w, height: h })
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 fn main() -> eframe::Result {
-    let icon = Arc::new(egui::IconData {
-        rgba:   make_icon_rgba(32),
-        width:  32,
-        height: 32,
-    });
+    #[cfg(target_os = "macos")]
+    let icon = icon_from_icns()
+        .unwrap_or_else(|| egui::IconData { rgba: make_icon_rgba(64), width: 64, height: 64 });
+    #[cfg(not(target_os = "macos"))]
+    let icon = egui::IconData { rgba: make_icon_rgba(64), width: 64, height: 64 };
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -227,7 +263,7 @@ fn main() -> eframe::Result {
             .with_inner_size([500.0, 750.0])
             .with_min_inner_size([360.0, 560.0])
             .with_resizable(true)
-            .with_icon(icon),
+            .with_icon(Arc::new(icon)),
         ..Default::default()
     };
     eframe::run_native("Rusdle", options, Box::new(|cc| {
@@ -353,10 +389,11 @@ impl eframe::App for RusdleApp {
         }
         if self.game.message_timer > 0.0 { ctx.request_repaint(); }
 
-        let panels_open = self.show_stats || self.show_profiles;
-
         // ── Physical keyboard ─────────────────────────────────────────────────
-        if self.game.status == GameStatus::Playing && !panels_open {
+        // Block game keys only when a text widget (e.g. profile name field) has
+        // focus — not just because a panel is open.
+        let text_focused = ctx.memory(|m| m.focused().is_some());
+        if self.game.status == GameStatus::Playing && !text_focused {
             ctx.input(|i| {
                 for ev in &i.events {
                     if let egui::Event::Key { key, pressed: true, modifiers, .. } = ev {
@@ -515,15 +552,18 @@ impl eframe::App for RusdleApp {
                         let state = if is_wide { None } else { self.game.keyboard.get(&ch) };
                         let bg    = key_bg(state);
 
-                        let hov = !panels_open && ctx.input(|i| {
-                            i.pointer.hover_pos().map_or(false, |p| key_rect.contains(p))
-                        });
+                        // Hover: check position AND that no window layer is on top
+                        let hov = ctx.input(|i| i.pointer.hover_pos())
+                            .map_or(false, |p| {
+                                key_rect.contains(p)
+                                    && ctx.layer_id_at(p)
+                                        .map_or(true, |l| l.order == egui::Order::Background)
+                            });
                         let draw_bg = if hov { lighten(bg, 25) } else { bg };
 
                         painter.rect_filled(key_rect, cr, draw_bg);
 
                         if label == "DEL" {
-                            // Drawn icon instead of text glyph
                             icon_backspace(painter, key_rect, C_WHITE, draw_bg);
                         } else {
                             let font_sz = if label == "ENTER" { 11.5 * scale } else { 14.0 * scale };
@@ -531,25 +571,23 @@ impl eframe::App for RusdleApp {
                                 FontId::proportional(font_sz), C_WHITE);
                         }
 
-                        if !panels_open {
-                            let clicked = ctx.input(|i| hov && i.pointer.primary_released());
-                            if clicked && self.game.status == GameStatus::Playing {
-                                match label {
-                                    "ENTER" => {
-                                        let before = self.game.current_row;
-                                        self.game.submit_guess();
-                                        if self.game.current_row > before {
-                                            self.anim_row     = Some(before);
-                                            self.anim_elapsed = 0.0;
-                                        }
+                        let clicked = ctx.input(|i| hov && i.pointer.primary_released());
+                        if clicked && self.game.status == GameStatus::Playing {
+                            match label {
+                                "ENTER" => {
+                                    let before = self.game.current_row;
+                                    self.game.submit_guess();
+                                    if self.game.current_row > before {
+                                        self.anim_row     = Some(before);
+                                        self.anim_elapsed = 0.0;
                                     }
-                                    "DEL" => self.game.delete_letter(),
-                                    _ => {
-                                        if self.game_start.is_none() {
-                                            self.game_start = Some(Instant::now());
-                                        }
-                                        self.game.type_letter(ch);
+                                }
+                                "DEL" => self.game.delete_letter(),
+                                _ => {
+                                    if self.game_start.is_none() {
+                                        self.game_start = Some(Instant::now());
                                     }
+                                    self.game.type_letter(ch);
                                 }
                             }
                         }
@@ -564,9 +602,12 @@ impl eframe::App for RusdleApp {
                     let bar_center_y = content_bot + bottom_bar * 0.5;
                     let br = Rect::from_center_size(
                         Pos2::new(full.center().x, bar_center_y), Vec2::new(bw, bh));
-                    let bhov = !panels_open && ctx.input(|i| {
-                        i.pointer.hover_pos().map_or(false, |p| br.contains(p))
-                    });
+                    let bhov = ctx.input(|i| i.pointer.hover_pos())
+                        .map_or(false, |p| {
+                            br.contains(p)
+                                && ctx.layer_id_at(p)
+                                    .map_or(true, |l| l.order == egui::Order::Background)
+                        });
                     painter.rect_filled(br, CornerRadius::same(4),
                         if bhov { lighten(C_CORRECT, 18) } else { C_CORRECT });
                     painter.text(br.center(), Align2::CENTER_CENTER,

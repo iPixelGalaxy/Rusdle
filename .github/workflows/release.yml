@@ -80,11 +80,6 @@ jobs:
             target/x86_64-apple-darwin/release/rusdle \
             -output rusdle-universal
 
-      - name: Generate app icon (ICNS)
-        run: |
-          python3 scripts/gen_macos_icon.py Rusdle.iconset
-          iconutil -c icns Rusdle.iconset -o AppIcon.icns
-
       - name: Assemble Rusdle.app bundle
         env:
           VERSION: ${{ github.ref_name }}
@@ -95,7 +90,7 @@ jobs:
 
           cp rusdle-universal "$APP/Contents/MacOS/rusdle"
           chmod +x "$APP/Contents/MacOS/rusdle"
-          cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+          cp assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
           # Strip leading 'v' from tag for CFBundleShortVersionString
           BUNDLE_VER="${VERSION#v}"
