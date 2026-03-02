@@ -85,26 +85,6 @@ cargo build --release
 
 ---
 
-## Releasing
-
-Push a version tag — the GitHub Actions workflow builds all three platform
-binaries and creates a GitHub Release automatically:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-This produces:
-
-| Artifact | Contents |
-|---|---|
-| `rusdle-windows-x64.zip` | `rusdle.exe` with embedded icon |
-| `rusdle-macos-universal.dmg` | `Rusdle.app` (arm64 + x86_64 universal) |
-| `rusdle-linux-x64.tar.gz` | `rusdle` binary |
-
----
-
 ## License
 
 MIT
